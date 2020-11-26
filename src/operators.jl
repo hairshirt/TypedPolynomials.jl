@@ -11,35 +11,75 @@ end
 combine(t1::T, t2::T) where {T <: Term} = Term(t1.coefficient + t2.coefficient, t1.monomial)
 compare(t1::Term, t2::Term) = monomial(t1) > monomial(t2)
 
-# Graded Lexicographic order
-# First compare total degree, then lexicographic order
+# Graded Reverse Lexicographic order default
+# First compare total degree, then reverse lexicographic order
+
+MONOMIAL_ORDER = :grevlex
+
 function isless(m1::Monomial{V}, m2::Monomial{V}) where {V}
-    d1 = degree(m1)
-    d2 = degree(m2)
-    if d1 < d2
-        return true
-    elseif d1 > d2
-        return false
-    else
+    global MONOMIAL_ORDER
+    
+    if MONOMIAL_ORDER == :lex
         return exponents(m1) < exponents(m2)
+    elseif MONOMIAL_ORDER == :rlex
+        return exponents(m1) > exponents(m2)
+    elseif MONOMIAL_ORDER == :grlex || MONOMIAL_ORDER == :grevlex
+        d1 = degree(m1)
+        d2 = degree(m2)
+        if d1 < d2
+            return true
+        elseif d1 > d2
+            return false
+        end
+        if MONOMIAL_ORDER == :grlex
+            return exponents(m1) < exponents(m2)
+        elseif MONOMIAL_ORDER == :grevlex
+            return exponents(m1) > exponents(m2)
+        end
     end
+    @error "Invalid ordering: $MONOMIAL_ORDER"
 end
+
+function lex(m1::Monomial{V}, m2::Monomial{V}) where {V}
+    if exponents(m1) == exponents(m2)
+        return 0
+    elseif exponents(m1) < exponents(m2)
+        return -1
+    end
+    1
+end
+
+function rlex(m1::Monomial{V}, m2::Monomial{V}) where {V}
+    if exponents(m1) == exponents(m2)
+        return 0
+    elseif exponents(m1) < exponents(m2)
+        return 1
+    end
+    -1
+end
+
 function grlex(m1::Monomial{V}, m2::Monomial{V}) where {V}
     d1 = degree(m1)
     d2 = degree(m2)
     if d1 != d2
         return d1 - d2
-    else
-        if exponents(m1) == exponents(m2)
-            return 0
-        elseif exponents(m1) < exponents(m2)
-            return -1
-        else
-            return 1
-        end
     end
+    lex(m1, m2)
 end
+
+function grevlex(m1::Monomial{V}, m2::Monomial{V}) where {V}
+    d1 = degree(m1)
+    d2 = degree(m2)
+    if d1 != d2
+        return d1 - d2
+    end
+    rlex(m1, m2)
+end
+
+lex(m1::Monomial, m2::Monomial) = lex(promote(m1, m2)...)
+rlex(m1::Monomial, m2::Monomial) = rlex(promote(m1, m2)...)
 grlex(m1::Monomial, m2::Monomial) = grlex(promote(m1, m2)...)
+grevlex(m1::Monomial, m2::Monomial) = grevlex(promote(m1, m2)...)
 
 jointerms(terms1::AbstractArray{<:Term}, terms2::AbstractArray{<:Term}) = mergesorted(terms1, terms2, compare, combine)
 function jointerms!(output::AbstractArray{<:Term}, terms1::AbstractArray{<:Term}, terms2::AbstractArray{<:Term})

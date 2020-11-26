@@ -3,8 +3,11 @@ module TypedPolynomials
 import MutableArithmetics
 const MA = MutableArithmetics
 
-using MultivariatePolynomials
+using Reexport
+@reexport using MultivariatePolynomials
 const MP = MultivariatePolynomials
+
+using DataStructures
 
 using MacroTools
 import Base: *, +, -, /, ^, ==,
@@ -14,14 +17,15 @@ import Base: *, +, -, /, ^, ==,
 using LinearAlgebra
 import LinearAlgebra: dot, adjoint
 export @polyvar,
-       Variable,
-       Monomial,
-       Term,
-       Polynomial,
-       variables,
-       terms,
-       differentiate,
-       subs
+    Variable,
+    Monomial,
+    Term,
+    Polynomial,
+    variables,
+    terms,
+    differentiate,
+    subs,
+    MONOMIAL_ORDER
 
 include("sequences.jl")
 import .Sequences: shortest_common_supersequence, mergesorted
