@@ -12,76 +12,80 @@ LCMLM(ftuple) = lcm(LM(ftuple[1]), LM(ftuple[2]))
 LCMLT(f1, f2) = lcm(LT(f1), LT(f2))
 LCMLT(ftuple) = lcm(LT(ftuple[1]), LT(ftuple[2]))
 Lpart(f1, f2) = div(LCMLM(f1, f2), LT(f1)) * f1
+Mpart(f1, f2) = div(LCMLM(f1, f2), LT(f1))
 spoly(f1, f2) = Lpart(f1, f2) - Lpart(f2, f1)
-critpairs(n) = [(i, j) for i in 1:n for j in i+1:n if i != j]
+allpairs(s) = [(i, j) for i in 1:s for j in i+1:s if i ≠ j]
 
-function isgrobner(F::Array{T}) where {T <: AbstractPolynomialLike}
-    for (i, f1) in enumerate(F)
-        for f2 in F[i+1:end]
-            s = spoly(f1, f2)
-            s = rem(s, F)
-            if !isapproxzero(s)
-                return false
-            end
-        end
-    end
-    true
+"Return sorted minimum degree pairs by LCMLM"
+function mindegpairs(F::Array{T}) where {T <: AbstractPolynomialLike}
+    map(x->x[1], sort([((f1, f2), degree(LCMLM(f1, f2)))
+                       for (i, f1) in enumerate(F) for f2 in F[i+1:end] if f1 ≠ f2],
+                      lt=(mdp1, mdp2) -> mdp1[2] < mdp2[2] ? true : false,
+                      rev=true))
 end
 
-function buchberger(I::Array{T}) where {T <: AbstractPolynomialLike}
-    F = copy(I)
-    pairs = [(f1, f2) for (i, f1) in enumerate(F) for f2 in F[i+1:end] if f1 ≠ f2]
-
-    while !isempty(pairs)
-        (f1, f2) = pop!(pairs)
-        s = spoly(f1, f2)
-        s = rem(s, F)
-        if !isapproxzero(s)
-            for f in F
-                push!(pairs, (s, f))
-            end
-            push!(F, s)
+"Normal selection strategy"
+function Select(pairs, G)
+    min = Inf
+    for pair in pairs
+        d = LCMLM(G[pair[1]], G[pair[2]])
+        if d < min
+            min = d
         end
     end
 
-    G = Array{T}(undef, 0)
-    while !isempty(F)
-        f = pop!(F)
-        r = rem(f, vcat(F, G))
-        if !isapproxzero(r)
-            push!(G, r)
+    minpairs = []
+    polys = []
+    for pair in pairs
+        d = LCMLM(G[pair[1]], G[pair[2]])
+        if d == min
+            push!(minpairs, pair)
+            push!(polys, (G[pair[1]], G[pair[2]]))
+        end
+    end
+    (minpairs, polys)
+end
+
+"Basic F4 from CLO"
+function F4(F::Array{T}) where {T <: AbstractPolynomialLike}
+    G = copy(F)
+    t = length(F)
+    B = allpairs(t)
+    while !isempty(B)
+        Bprime, polys = Select(B, G)
+        setdiff!(B, Bprime)
+        L = [Lpart(pair[1], pair[2]) for pair in polys]
+        M = ComputeM(L, G)
+        N = RREF(M)
+        Nplus = [n for n in rows(N) if LM(n) ∉ LMS(rows(M))]
+        for n in Nplus
+            t += 1
+            ft = Poly(n)
+            union!(G, ft)
+            union!(B, [(i, t) for i in 1:t-1])
         end
     end
     G
 end
 
-"Return sorted minimum degree pairs by S-Polynomial"
-function mindegspolypairs(F::Array{T}) where {T <: AbstractPolynomialLike}
-    map(p->p[1], sort([((f1, f2), degree(LM(spoly(f1, f2))))
-                       for (i, f1) in enumerate(F) for f2 in F[i+1:end] if f1 ≠ f2],
-                      lt=(mdp1, mdp2) -> mdp1[2] < mdp2[2] ? true : false))
-end
-
-"Return sorted minimum degree pairs by LCMLM"
-function mindegpairs(F::Array{T}) where {T <: AbstractPolynomialLike}
-    map(p->p[1], sort([((f1, f2), degree(LCMLM(f1, f2)))
-                       for (i, f1) in enumerate(F) for f2 in F[i+1:end] if f1 ≠ f2],
-                      lt=(mdp1, mdp2) -> mdp1[2] < mdp2[2] ? true : false))
-end
-                          
+"Reduce a polynomial modulo P"
 function REDPOL(f, P)
-    qp = Any[0 for p in P]
+    qp = [0 for p in P]
     g = copy(f)
-    for i in 1:length(P)
-        m = rem(g, P[i])
-        if ~isapproxzero(m)
-            g = g - m*P[i]
-            qp[i] += m
+    while any([divides(LT(p), LT(g)) for p in P])
+        for (i, p) in enumerate(P)
+            if divides(LT(p), LT(g))
+                m = div(g, p)
+                g -= m*p
+                qp[i] += m
+            end
         end
     end
-    return (qp, g)
+    @assert maximum(LTS(qp .* P)) ≤ LT(f)
+    (qp, g)
 end
 
+"Reduce a system of Polynomials"
 function REDUCTION(P)
     Q = copy(P)
     for p in Q
@@ -95,9 +99,10 @@ function REDUCTION(P)
     end
     [LC(q)^(-1) * q for q in Q]
 end
-        
+
+"Test if a system of polynomials is a Groebner basis"
 function GROEBNERTEST(G)
-    B = Set((g1, g2) for g1 in G[1:end-1] for g2 in G[2:end] if g1 ≠ g2)
+    B = mindegpairs(G)
     while ~isempty(B)
         g1, g2 = pop!(B)
         h = spoly(g1, g2)
@@ -109,9 +114,10 @@ function GROEBNERTEST(G)
     true
 end
 
+"Basic Buchberger algorithm"
 function GROEBNER(F)
     G = copy(F)
-    B = Set((g1, g2) for (i, g1) in enumerate(G) for g2 in G[i+1:end] if g1 ≠ g2)
+    B = mindegpairs(G)
     while ~isempty(B)
         g1, g2 = pop!(B)
         h = spoly(g1, g2)
@@ -126,6 +132,7 @@ function GROEBNER(F)
     G
 end
 
+"Produce unique Reduced Groebner Basis"
 function REDGROEBNER(G)
     F = copy(G)
     H = Vector{eltype(F)}()
@@ -201,7 +208,43 @@ function GROEBNERNEW2(F::Array{T}) where {T <: AbstractPolynomialLike}
 end
 
 function EXTGROEBNER(F::Array{T}) where {T <: AbstractPolynomialLike}
+    G = copy(F)
+    #𝒢 = [(f, REDPOL(f, G)) for f in F]
+    B = mindegpairs(G)
 
+    while !isempty(B)
+        g1, g2 = pop!(B)
+        g = spoly(g1, g2)
+        (qp, h) = REDPOL(g, G)
+        if !isapproxzero(h)
+            union!(B, [(p, h) for p in G])
+     #       union!(𝒢, (h, REDPOL(h, F)))
+            union!(G, [h])
+        end
+    end
+    
+    ℱ = [(f, REDPOL(f, G)) for f in F]
+    (G, ℱ)
+end
+
+function EXTREDGROEBNER(F::Array{T}) where {T <: AbstractPolynomialLike}
+    G = copy(F)
+    𝒢 = [(f, f == g ? 1 : 0) for f in F for g in G]
+    B = mindegpairs(G)
+
+    while !isempty(B)
+        g1, g2 = pop!(B)
+        m1 = Mpart(g1, g2)
+        m2 = Mpart(g2, g1)
+        g = m1*g1 - m2*g2
+        (qp, h) = REDPOL(g, setdiff(G, [g]))
+        if !isapproxzero(h)
+            union!(B, [(p, h) for p in setdiff(G, [g])])
+            union!(𝒢, [(h, REDPOL(f, setdiff(G, [g]))[1]) for f in F])
+            union!(G, [h])
+        end
+    end
+    
 end
     
 @polyvar x[1:4]
@@ -231,3 +274,11 @@ h3 = 2.0*x[1]*x[2] - 2.0*x[3] - 2.0*x[3]*x[4]
 h4 = x[1]^2 + x[2]^2 + x[3]^2 - 1.0
 
 H = [h1, h2, h3, h4]
+
+z1 = x[1]*x[2] + x[2]^2
+z2 = x[3] + 1
+z3 = x[2]^3*x[3] + x[1]^2
+z4 = x[3]^5*x[2]^2 + 4
+
+Z = [z1, z2, z3, z4]
+
