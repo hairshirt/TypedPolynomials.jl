@@ -25,7 +25,12 @@ export @polyvar,
     terms,
     differentiate,
     subs,
-    MONOMIAL_ORDER
+    MONOMIAL_ORDER,
+    grevlex,
+    grlex,
+    rlex,
+    lex,
+    monom_cmp
 
 include("sequences.jl")
 import .Sequences: shortest_common_supersequence, mergesorted

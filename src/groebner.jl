@@ -1,10 +1,11 @@
 using DataStructures
+using TypedPolynomials
 
 # Utility functions
 LT(f) = leadingterm(f)
 LTS(F) = [LT(f) for f in F]
 LM(f) = leadingmonomial(f)
-LMS(F) = [LM(f) for f in F]
+LMS(F) = unique([LM(f) for f in F])
 LC(f) = leadingcoefficient(f)
 LCS(F) = [LC(f) for f in F]
 LCMLM(f1, f2) = lcm(LM(f1), LM(f2))
@@ -15,6 +16,10 @@ Lpart(f1, f2) = div(LCMLM(f1, f2), LT(f1)) * f1
 Mpart(f1, f2) = div(LCMLM(f1, f2), LT(f1))
 spoly(f1, f2) = Lpart(f1, f2) - Lpart(f2, f1)
 allpairs(s) = [(i, j) for i in 1:s for j in i+1:s if i ≠ j]
+Mon(L) = unique(collect(Iterators.flatten([monomials(l) for l in L])))
+row2poly(mat, row, monoms) = polynomial(mat[row, :] .* Mon(monoms))
+rows(N, monoms) = [row2poly(N, i, monoms) for i in 1:size(N)[1]]
+
 
 "Return sorted minimum degree pairs by LCMLM"
 function mindegpairs(F::Array{T}) where {T <: AbstractPolynomialLike}
@@ -25,10 +30,10 @@ function mindegpairs(F::Array{T}) where {T <: AbstractPolynomialLike}
 end
 
 "Normal selection strategy"
-function Select(pairs, G)
+function Select(B, G)
     min = Inf
-    for pair in pairs
-        d = LCMLM(G[pair[1]], G[pair[2]])
+    for pair in B
+        d = degree(LCMLM(G[pair[1]], G[pair[2]]))
         if d < min
             min = d
         end
@@ -36,8 +41,8 @@ function Select(pairs, G)
 
     minpairs = []
     polys = []
-    for pair in pairs
-        d = LCMLM(G[pair[1]], G[pair[2]])
+    for pair in B
+        d = degree(LCMLM(G[pair[1]], G[pair[2]]))
         if d == min
             push!(minpairs, pair)
             push!(polys, (G[pair[1]], G[pair[2]]))
@@ -49,23 +54,103 @@ end
 "Basic F4 from CLO"
 function F4(F::Array{T}) where {T <: AbstractPolynomialLike}
     G = copy(F)
-    t = length(F)
+    t = length(G)
     B = allpairs(t)
+    count = 0
     while !isempty(B)
         Bprime, polys = Select(B, G)
-        setdiff!(B, Bprime)
-        L = [Lpart(pair[1], pair[2]) for pair in polys]
-        M = ComputeM(L, G)
+        B = setdiff(B, Bprime)
+        L₁ = [Lpart(pair[1], pair[2]) for pair in polys]
+        L₂ = [Lpart(pair[2], pair[1]) for pair in polys]
+        L = unique(cat(L₁, L₂, dims=1))
+        M, monoms = ComputeM(L, G)
         N = RREF(M)
-        Nplus = [n for n in rows(N) if LM(n) ∉ LMS(rows(M))]
+        Nplus = [p for p in rows(N, monoms) if LM(p) ∉ LMS(rows(M, monoms)) && !isapproxzero(p)]
         for n in Nplus
-            t += 1
-            ft = Poly(n)
-            union!(G, ft)
-            union!(B, [(i, t) for i in 1:t-1])
+            G = union(G, [n])
+            t = length(G)
+            B = union(B, [(i, t) for i in 1:t-1])
         end
     end
     G
+end
+
+function ComputeM(L, G)
+    H = copy(L)
+    done = Set(LMS(H))
+    MonH = Set(Mon(H))
+
+    while MonH ≠ done
+        xβ = maximum(setdiff(Mon(H), done))
+            
+        done = union(done, [xβ])
+        for f in G
+            if divides(LM(f), xβ)
+                H = union(H, [div(xβ, LM(f)) * f])
+                MonH = union(MonH, Mon(H))
+            end
+        end
+    end
+    t = typeof(coefficients(G[1])[1])
+    M = zeros(t, length(H), length(MonH))
+    for (i, poly) in enumerate([zip(coefficients(h), monomials(h)) for h in H])
+        for (coeff, monom) in poly
+            for (j, m) in enumerate(MonH)
+                if monom == m
+                    M[i, j] = coeff
+                end
+            end
+        end
+    end
+    return M, MonH
+end
+
+function REF(M)
+    A = copy(M)
+    r = 0
+    rows, cols = size(A)
+    for i in 1:cols
+        piv_found = false
+        for j in r+1:rows
+            if A[j, i] ≠ 0
+                r += 1
+                A[j, :], A[r, :] = A[r, :], A[j, :]
+                A[r, :] *= A[r, i]^-1
+                piv_found = true
+                break
+            end
+        end
+        if piv_found
+            for j in r+1:rows
+                A[j, :] -= A[j, i] * A[r, :]
+            end
+        end
+    end
+    A
+end
+
+function RREF(M)
+    A = copy(M)
+    rows, cols = size(A)
+    r = 0
+    for i in 1:cols
+        piv_found = false
+        for j in r+1:rows
+            if A[j, i] ≠ 0
+                r += 1
+                A[j, :], A[r, :] = A[r, :], A[j, :]
+                A[r, :] *= A[r,i]^-1
+                piv_found = true
+                break
+            end
+        end
+        if piv_found
+            for j in [n for n in 1:rows if n != r]
+                A[j, :] -= A[j, i] * A[r, :]
+            end
+        end
+    end
+    A
 end
 
 "Reduce a polynomial modulo P"
@@ -103,11 +188,12 @@ end
 "Test if a system of polynomials is a Groebner basis"
 function GROEBNERTEST(G)
     B = mindegpairs(G)
-    while ~isempty(B)
+    while !isempty(B)
         g1, g2 = pop!(B)
         h = spoly(g1, g2)
         h = rem(h, G)
-        if ~isapproxzero(h)
+        if !isapproxzero(h)
+            println("h reduced by G: $h")
             return false
         end
     end
@@ -118,11 +204,11 @@ end
 function GROEBNER(F)
     G = copy(F)
     B = mindegpairs(G)
-    while ~isempty(B)
+    while !isempty(B)
         g1, g2 = pop!(B)
         h = spoly(g1, g2)
         h = rem(h, G)
-        if ~isapproxzero(h)
+        if !isapproxzero(h)
             for g in G
                 union!(B, Set([(g, h)]))
             end
@@ -197,14 +283,18 @@ function GROEBNERNEW2(F::Array{T}) where {T <: AbstractPolynomialLike}
         (G, B) = UPDATE(G, B, h)
     end
     while !isempty(B)
-        (g1, g2) = pop!(B)
+        g1, g2 = pop!(B)
         h = spoly(g1, g2)
-        _, h = divrem(h, collect(G))
+        h = rem(h, G)
         if !isapproxzero(h)
             (G, B) = UPDATE(G, B, h)
         end
     end
     G
+end
+
+function GEBAUERMOLLER(F::Array{T}) where {T <: AbstractPolynomialLike}
+    REDGROEBNER(GROEBNERNEW2(F))
 end
 
 function EXTGROEBNER(F::Array{T}) where {T <: AbstractPolynomialLike}
@@ -249,18 +339,12 @@ end
     
 @polyvar x[1:4]
 
-MONOMIAL_ORDER = :grevlex
-
 fz = 4x[1]*x[2]^2*x[3] + 4x[3]^2 - 5x[1]^3 + 7x[1]^2*x[3]^2
 
-f1 = x[1]^2 - (2//1)x[2]^2 - (2//1)x[2]*x[3] - x[3]^2
-f2 = -x[1]*x[2] + (2//1)*x[2]*x[3] + x[3]^2
-f3 = -(1//1)x[1]^2 + x[1]*x[2] + x[1]*x[3] + x[3]^2
-F = [f1, f2, f3]
-
-i1 = (-3//1)*x[1]^3 + x[2]
-i2 = (1//1)x[1]^2*x[2] - x[3]
-I = [i1, i2]
+f1 = x[1]^2 + x[1]*x[2] - 1.0
+f2 = x[1]^2 - x[3]^2
+f3 = x[1]*x[2] + 1.0
+I = [f1, f2, f3]
 
 g1 = (1//1)*x[1]^2 + x[2]^2 + x[3]^2 - (1//1)
 g2 = (1//1)*x[1]^2 - x[2] + x[3]^2
@@ -276,9 +360,15 @@ h4 = x[1]^2 + x[2]^2 + x[3]^2 - 1.0
 H = [h1, h2, h3, h4]
 
 z1 = x[1]*x[2] + x[2]^2
-z2 = x[3] + 1
+z2 = x[3] + 1//1
 z3 = x[2]^3*x[3] + x[1]^2
-z4 = x[3]^5*x[2]^2 + 4
+z4 = x[3]^5*x[2]^2 + 4//1
 
 Z = [z1, z2, z3, z4]
+
+c1 = x[1] + x[2] + x[3] + x[4]
+c2 = x[1]*x[2] + x[2]*x[3] + x[3]*x[4] + x[1]*x[4]
+c3 = x[1]*x[2]*x[3] + x[2]*x[3]*x[4] + x[3]*x[4]*x[1] + x[4]*x[1]*x[2]
+c4 = x[1]*x[2]*x[3]*x[4] - 1//1
+Cyclic4 = [c1, c2, c3, c4]
 
